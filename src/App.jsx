@@ -1312,6 +1312,535 @@ function DisputesView({ project, updateProject, role, activeDispute, setActiveDi
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ESTIMATOR
+// ═══════════════════════════════════════════════════════════════════════════════
+const PROJECT_TYPES = [
+  { id: "bathroom",  label: "Bathroom Renovation",  icon: "🚿" },
+  { id: "kitchen",   label: "Kitchen Renovation",   icon: "🍳" },
+  { id: "basement",  label: "Basement Finishing",   icon: "🏚️" },
+  { id: "addition",  label: "Addition / New Room",  icon: "🏠" },
+];
+
+const QUALITY_LEVELS = ["Low", "Mid", "High"];
+const QUALITY_COLORS = { Low: "#60a5fa", Mid: "#c8a96e", High: "#a78bfa" };
+const QUALITY_DESCS  = { Low: "Builder grade, budget-friendly", Mid: "Standard quality, best value", High: "Premium materials, luxury finish" };
+
+function EstimatorView({ project, updateProject }) {
+  const [step, setStep]           = useState("setup"); // setup | generating | review | final
+  const [projectType, setProjectType] = useState("");
+  const [scope, setScope]         = useState({ width: "", length: "", height: "", notes: "" });
+  const [quality, setQuality]     = useState("Mid");
+  const [estimate, setEstimate]   = useState(() => project.estimate || null);
+  const [generating, setGenerating] = useState(false);
+  const [genError, setGenError]   = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [contractorNotes, setContractorNotes] = useState(project.estimateNotes || "");
+  const [showPrint, setShowPrint] = useState(false);
+
+  const generateEstimate = async () => {
+    setGenerating(true); setGenError(""); setStep("generating");
+    const sys = `You are an expert construction estimator with 20 years of experience. Generate a detailed project estimate. Respond ONLY with valid JSON — no markdown, no code fences. Use this exact structure:
+{
+  "projectTitle": "string",
+  "summary": "2-3 sentence project overview",
+  "sections": [
+    {
+      "id": "unique_id",
+      "name": "Section name (e.g. Demolition, Framing, Tile Work)",
+      "items": [
+        {
+          "id": "unique_item_id",
+          "description": "Item description",
+          "unit": "sq ft / each / linear ft / allowance",
+          "quantity": number,
+          "low": number,
+          "mid": number,
+          "high": number,
+          "notes": "brief note about this item"
+        }
+      ]
+    }
+  ],
+  "laborSections": [
+    {
+      "id": "unique_id",
+      "trade": "Trade name (e.g. General Contractor, Plumber, Electrician, Tile Setter)",
+      "description": "What they do on this project",
+      "hours": number,
+      "low": number,
+      "mid": number,
+      "high": number
+    }
+  ],
+  "additionalCosts": [
+    {
+      "id": "unique_id",
+      "description": "e.g. Building Permit, Dumpster Rental, Site Protection",
+      "low": number,
+      "mid": number,
+      "high": number
+    }
+  ],
+  "timeline": "estimated duration e.g. 6-8 weeks",
+  "assumptions": ["assumption 1", "assumption 2"]
+}`;
+
+    const prompt = `Generate a detailed construction estimate for a ${projectType} renovation project.
+Project details:
+- Type: ${PROJECT_TYPES.find(p => p.id === projectType)?.label}
+- Room dimensions: ${scope.width}ft wide x ${scope.length}ft long${scope.height ? ` x ${scope.height}ft ceiling height` : ""}
+- Quality level: ${quality} (${QUALITY_DESCS[quality]})
+- Additional scope notes: ${scope.notes || "Standard renovation"}
+- Location: ${project.address || "Northeast US"}
+
+Provide realistic material costs per unit for ${quality.toLowerCase()} quality finishes in the current market. Include ALL trades and materials needed. Be thorough and detailed — this is a professional estimate.`;
+
+    try {
+      const raw = await callClaude([{ role: "user", content: prompt }], sys);
+      const clean = raw.replace(/```json|```/gi, "").trim();
+      const parsed = JSON.parse(clean);
+      setEstimate({ ...parsed, quality, projectType, generatedAt: new Date().toLocaleDateString() });
+      updateProject({ estimate: { ...parsed, quality, projectType, generatedAt: new Date().toLocaleDateString() } });
+      setStep("review");
+    } catch(e) {
+      setGenError("Could not generate estimate. Please try again. " + e.message);
+      setStep("setup");
+    }
+    setGenerating(false);
+  };
+
+  const calcSectionTotal = (items, q) => items.reduce((s, i) => s + (i.quantity * (q === "Low" ? i.low : q === "Mid" ? i.mid : i.high)), 0);
+  const calcLaborTotal   = (items, q) => items.reduce((s, i) => s + (q === "Low" ? i.low : q === "Mid" ? i.mid : i.high), 0);
+  const calcAddlTotal    = (items, q) => items.reduce((s, i) => s + (q === "Low" ? i.low : q === "Mid" ? i.mid : i.high), 0);
+
+  const grandTotal = (q) => {
+    if (!estimate) return 0;
+    const mats  = (estimate.sections || []).reduce((s, sec) => s + calcSectionTotal(sec.items || [], q), 0);
+    const labor = calcLaborTotal(estimate.laborSections || [], q);
+    const addl  = calcAddlTotal(estimate.additionalCosts || [], q);
+    return mats + labor + addl;
+  };
+
+  const updateItem = (sectionId, itemId, field, value) => {
+    const updated = { ...estimate, sections: estimate.sections.map(sec =>
+      sec.id === sectionId ? { ...sec, items: sec.items.map(it => it.id === itemId ? { ...it, [field]: field === "quantity" || field === "low" || field === "mid" || field === "high" ? parseFloat(value) || 0 : value } : it) } : sec
+    )};
+    setEstimate(updated); updateProject({ estimate: updated });
+  };
+
+  const updateLabor = (id, field, value) => {
+    const updated = { ...estimate, laborSections: estimate.laborSections.map(l => l.id === id ? { ...l, [field]: ["low","mid","high","hours"].includes(field) ? parseFloat(value)||0 : value } : l) };
+    setEstimate(updated); updateProject({ estimate: updated });
+  };
+
+  const updateAddl = (id, field, value) => {
+    const updated = { ...estimate, additionalCosts: estimate.additionalCosts.map(a => a.id === id ? { ...a, [field]: ["low","mid","high"].includes(field) ? parseFloat(value)||0 : value } : a) };
+    setEstimate(updated); updateProject({ estimate: updated });
+  };
+
+  const addItem = (sectionId) => {
+    const newItem = { id: "item_" + Date.now(), description: "New item", unit: "allowance", quantity: 1, low: 0, mid: 0, high: 0, notes: "" };
+    const updated = { ...estimate, sections: estimate.sections.map(sec => sec.id === sectionId ? { ...sec, items: [...sec.items, newItem] } : sec) };
+    setEstimate(updated); updateProject({ estimate: updated });
+  };
+
+  const removeItem = (sectionId, itemId) => {
+    const updated = { ...estimate, sections: estimate.sections.map(sec => sec.id === sectionId ? { ...sec, items: sec.items.filter(it => it.id !== itemId) } : sec) };
+    setEstimate(updated); updateProject({ estimate: updated });
+  };
+
+  const qColor = QUALITY_COLORS[estimate?.quality || quality];
+
+  // Print view
+  if (showPrint) return (
+    <div style={{ background: "#fff", color: "#000", padding: 40, fontFamily: "'Georgia',serif", minHeight: "100vh" }}>
+      <style>{`@media print { body { margin: 0; } }`}</style>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, borderBottom: "3px solid #c8a96e", paddingBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 28, fontWeight: 700, color: "#0a0d14", fontFamily: "'Playfair Display',serif" }}>GroundWork</div>
+          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Professional Construction Estimate</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#0a0d14" }}>{project.contractor}</div>
+          <div style={{ fontSize: 12, color: "#64748b" }}>License: {project.contractorLicense}</div>
+          <div style={{ fontSize: 12, color: "#64748b" }}>Generated: {estimate?.generatedAt}</div>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Playfair Display',serif", marginBottom: 4 }}>{estimate?.projectTitle}</div>
+        <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>{project.name} · {project.address}</div>
+        <div style={{ fontSize: 13, color: "#374151" }}>{estimate?.summary}</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, marginBottom: 28 }}>
+        {QUALITY_LEVELS.map(q => (
+          <div key={q} style={{ border: `2px solid ${q === estimate?.quality ? "#c8a96e" : "#e5e7eb"}`, borderRadius: 8, padding: "12px 16px", background: q === estimate?.quality ? "#fef9f0" : "#f9fafb" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.08em", marginBottom: 4 }}>{q.toUpperCase()} END</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: q === estimate?.quality ? "#c8a96e" : "#374151" }}>{fmt(grandTotal(q))}</div>
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>{QUALITY_DESCS[q]}</div>
+            {q === estimate?.quality && <div style={{ fontSize: 10, color: "#c8a96e", marginTop: 4, fontWeight: 700 }}>★ SELECTED QUALITY</div>}
+          </div>
+        ))}
+      </div>
+
+      {(estimate?.sections || []).map(sec => (
+        <div key={sec.id} style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, background: "#f3f4f6", padding: "8px 12px", borderRadius: 4, marginBottom: 8, fontFamily: "'Playfair Display',serif" }}>MATERIALS — {sec.name.toUpperCase()}</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{["Description","Unit","Qty","Low","Mid","High","Notes"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", color: "#6b7280", fontWeight: 600 }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {(sec.items || []).map(it => (
+                <tr key={it.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                  <td style={{ padding: "6px 8px" }}>{it.description}</td>
+                  <td style={{ padding: "6px 8px", color: "#6b7280" }}>{it.unit}</td>
+                  <td style={{ padding: "6px 8px" }}>{it.quantity}</td>
+                  <td style={{ padding: "6px 8px" }}>{fmt(it.quantity * it.low)}</td>
+                  <td style={{ padding: "6px 8px", fontWeight: it.quantity * it.mid === it.quantity * (estimate?.quality === "Low" ? it.low : estimate?.quality === "Mid" ? it.mid : it.high) ? 700 : 400 }}>{fmt(it.quantity * it.mid)}</td>
+                  <td style={{ padding: "6px 8px" }}>{fmt(it.quantity * it.high)}</td>
+                  <td style={{ padding: "6px 8px", color: "#6b7280", fontSize: 11 }}>{it.notes}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "2px solid #e5e7eb", fontWeight: 700 }}>
+                <td colSpan={3} style={{ padding: "6px 8px" }}>Section Total</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(calcSectionTotal(sec.items||[], "Low"))}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(calcSectionTotal(sec.items||[], "Mid"))}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(calcSectionTotal(sec.items||[], "High"))}</td>
+                <td/>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, background: "#f3f4f6", padding: "8px 12px", borderRadius: 4, marginBottom: 8, fontFamily: "'Playfair Display',serif" }}>LABOR</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{["Trade","Description","Low","Mid","High"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", color: "#6b7280", fontWeight: 600 }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(estimate?.laborSections || []).map(l => (
+              <tr key={l.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <td style={{ padding: "6px 8px", fontWeight: 600 }}>{l.trade}</td>
+                <td style={{ padding: "6px 8px", color: "#6b7280" }}>{l.description}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(l.low)}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(l.mid)}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(l.high)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, background: "#f3f4f6", padding: "8px 12px", borderRadius: 4, marginBottom: 8, fontFamily: "'Playfair Display',serif" }}>ADDITIONAL COSTS</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ borderBottom: "1px solid #e5e7eb" }}>{["Description","Low","Mid","High"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", color: "#6b7280", fontWeight: 600 }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(estimate?.additionalCosts || []).map(a => (
+              <tr key={a.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <td style={{ padding: "6px 8px" }}>{a.description}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(a.low)}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(a.mid)}</td>
+                <td style={{ padding: "6px 8px" }}>{fmt(a.high)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ background: "#0a0d14", color: "#fff", borderRadius: 8, padding: "16px 20px", marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+          {QUALITY_LEVELS.map(q => (
+            <div key={q} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginBottom: 4 }}>{q.toUpperCase()} END TOTAL</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: QUALITY_COLORS[q] }}>{fmt(grandTotal(q))}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {contractorNotes && (
+        <div style={{ marginBottom: 20, padding: "14px 16px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Contractor Notes</div>
+          <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{contractorNotes}</div>
+        </div>
+      )}
+
+      {(estimate?.assumptions || []).length > 0 && (
+        <div style={{ padding: "14px 16px", background: "#f9fafb", borderRadius: 8, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Assumptions & Exclusions</div>
+          {estimate.assumptions.map((a, i) => <div key={i} style={{ fontSize: 12, color: "#374151", marginBottom: 3 }}>• {a}</div>)}
+        </div>
+      )}
+
+      <div style={{ borderTop: "2px solid #e5e7eb", paddingTop: 16, fontSize: 11, color: "#9ca3af", lineHeight: 1.6 }}>
+        Estimated timeline: {estimate?.timeline} · This estimate is valid for 30 days · Prices subject to change based on final scope · {project.contractor} · License {project.contractorLicense}
+      </div>
+
+      <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+        <button onClick={() => window.print()} style={{ background: "#c8a96e", border: "none", borderRadius: 6, padding: "10px 20px", fontFamily: "'Lato',sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🖨️ Print / Save as PDF</button>
+        <button onClick={() => setShowPrint(false)} style={{ background: "#f3f4f6", border: "none", borderRadius: 6, padding: "10px 20px", fontFamily: "'Lato',sans-serif", fontSize: 13, cursor: "pointer" }}>← Back to Editor</button>
+      </div>
+    </div>
+  );
+
+  // Setup screen
+  if (step === "setup" || !estimate) return (
+    <div>
+      <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, color: "#e2e8f0", marginBottom: 4 }}>Project Estimator</div>
+      <div style={{ fontSize: 13, color: "#64748b", fontFamily: "'Lato',sans-serif", marginBottom: 28 }}>AI-powered estimate builder — generate a detailed itemized estimate in seconds</div>
+
+      {estimate && (
+        <div style={{ background: "#181c27", border: "1px solid #22c55e44", borderRadius: 10, padding: "14px 18px", marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 13, color: "#22c55e", fontFamily: "'IBM Plex Mono',monospace", marginBottom: 2 }}>✓ Estimate on file</div>
+            <div style={{ fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif" }}>{estimate.projectTitle} · Generated {estimate.generatedAt}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn small color="#1e2335" onClick={() => setStep("review")}>View Estimate</Btn>
+            <Btn small color="#252a3a" onClick={() => setShowPrint(true)}>🖨️ Print</Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 12 }}>PROJECT TYPE</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {PROJECT_TYPES.map(pt => (
+                <div key={pt.id} onClick={() => setProjectType(pt.id)} style={{ background: projectType === pt.id ? "#1e2335" : "#181c27", border: `1px solid ${projectType === pt.id ? "#c8a96e" : "#252a3a"}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all .2s" }}>
+                  <div style={{ fontSize: 24, marginBottom: 6 }}>{pt.icon}</div>
+                  <div style={{ fontSize: 13, fontFamily: "'Lato',sans-serif", fontWeight: 700, color: projectType === pt.id ? "#c8a96e" : "#e2e8f0" }}>{pt.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 12 }}>ROOM DIMENSIONS</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              {[{l:"Width (ft)",k:"width"},{l:"Length (ft)",k:"length"},{l:"Height (ft)",k:"height"}].map(f => (
+                <Inp key={f.k} label={f.l} value={scope[f.k]} onChange={v => setScope({...scope,[f.k]:v})} type="number" placeholder="0" />
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 8 }}>SCOPE NOTES</div>
+            <textarea value={scope.notes} onChange={e => setScope({...scope, notes: e.target.value})} placeholder="Describe any specific requirements, existing conditions, special requests (e.g. custom tile work, moving walls, adding a window)..."
+              rows={4} style={{ background: "#252a3a", border: "1px solid #3b4266", borderRadius: 6, color: "#e2e8f0", fontFamily: "'Lato',sans-serif", fontSize: 13, padding: "10px 12px", width: "100%", outline: "none", resize: "none", lineHeight: 1.6 }} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 12 }}>QUALITY LEVEL</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {QUALITY_LEVELS.map(q => (
+                <div key={q} onClick={() => setQuality(q)} style={{ background: quality === q ? "#1e2335" : "#181c27", border: `1px solid ${quality === q ? QUALITY_COLORS[q] : "#252a3a"}`, borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all .2s", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: QUALITY_COLORS[q] + "22", border: `2px solid ${quality === q ? QUALITY_COLORS[q] : "#252a3a"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: quality === q ? QUALITY_COLORS[q] : "#252a3a" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 14, fontFamily: "'Lato',sans-serif", fontWeight: 700, color: quality === q ? QUALITY_COLORS[q] : "#e2e8f0" }}>{q}-End Quality</div>
+                    <div style={{ fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif", marginTop: 2 }}>{QUALITY_DESCS[q]}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, padding: 18 }}>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 12 }}>WHAT YOU'LL GET</div>
+            {["Itemized materials list with unit costs","Labor breakdown by trade","Permits, disposal & overhead costs","Low / Mid / High pricing for all items","Editable line items","Printable PDF estimate"].map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 13, fontFamily: "'Lato',sans-serif", color: "#94a3b8" }}>
+                <span style={{ color: "#22c55e" }}>✓</span> {f}
+              </div>
+            ))}
+          </div>
+
+          {genError && <div style={{ background: "#2d1e1e", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#f87171", fontFamily: "'Lato',sans-serif", lineHeight: 1.5 }}>{genError}</div>}
+
+          <Btn full disabled={!projectType || !scope.width || !scope.length} color="#c8a96e" onClick={generateEstimate}>
+            ✨ Generate AI Estimate
+          </Btn>
+          {(!projectType || !scope.width || !scope.length) && <div style={{ fontSize: 11, color: "#3b4266", fontFamily: "'Lato',sans-serif", textAlign: "center" }}>Select a project type and enter dimensions to continue</div>}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (step === "generating") return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
+      <Spinner icon="📋" label="GENERATING ESTIMATE..." />
+      <div style={{ fontSize: 13, color: "#64748b", fontFamily: "'Lato',sans-serif", marginTop: 16, textAlign: "center", maxWidth: 340, lineHeight: 1.6 }}>
+        Claude is calculating materials, labor, and costs for your {PROJECT_TYPES.find(p => p.id === projectType)?.label.toLowerCase()}...
+      </div>
+    </div>
+  );
+
+  // Review / edit screen
+  const selQ = estimate.quality || "Mid";
+  const selColor = QUALITY_COLORS[selQ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, color: "#e2e8f0", marginBottom: 4 }}>{estimate.projectTitle}</div>
+          <div style={{ fontSize: 13, color: "#64748b", fontFamily: "'Lato',sans-serif" }}>{estimate.summary}</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <Btn small color="#252a3a" onClick={() => setStep("setup")}>← Regenerate</Btn>
+          <Btn small color="#a78bfa" onClick={() => setShowPrint(true)}>🖨️ Print / PDF</Btn>
+        </div>
+      </div>
+
+      {/* Grand total cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 24 }}>
+        {QUALITY_LEVELS.map(q => (
+          <div key={q} style={{ background: q === selQ ? "linear-gradient(135deg,#181c27,#1e2335)" : "#181c27", border: `2px solid ${q === selQ ? QUALITY_COLORS[q] : "#252a3a"}`, borderRadius: 10, padding: "16px 18px", textAlign: "center" }}>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: q === selQ ? QUALITY_COLORS[q] : "#64748b", letterSpacing: "0.1em", marginBottom: 6 }}>{q.toUpperCase()} END {q === selQ ? "★ SELECTED" : ""}</div>
+            <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 22, color: QUALITY_COLORS[q], fontWeight: 500 }}>{fmt(grandTotal(q))}</div>
+            <div style={{ fontSize: 11, color: "#64748b", fontFamily: "'Lato',sans-serif", marginTop: 4 }}>{QUALITY_DESCS[q]}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Materials sections */}
+      {(estimate.sections || []).map(sec => (
+        <div key={sec.id} style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid #252a3a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#0f1117" }}>
+            <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 15, color: "#e2e8f0" }}>Materials — {sec.name}</div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: selColor }}>{fmt(calcSectionTotal(sec.items||[], selQ))}</span>
+              <Btn small color="#252a3a" onClick={() => addItem(sec.id)}>+ Add Item</Btn>
+            </div>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Lato',sans-serif", fontSize: 12 }}>
+            <thead><tr style={{ background: "#0a0d14" }}>{["Description","Unit","Qty","Low/unit","Mid/unit","High/unit","Notes",""].map(h => <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: "#3b4266", fontWeight: 400, letterSpacing: "0.08em" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {(sec.items || []).map((it, i) => (
+                <tr key={it.id} style={{ borderBottom: "1px solid #1e2130", background: i % 2 === 0 ? "#181c27" : "#161926" }}>
+                  <td style={{ padding: "8px 12px" }}>
+                    {editingId === it.id
+                      ? <input value={it.description} onChange={e => updateItem(sec.id, it.id, "description", e.target.value)} style={{ background: "#252a3a", border: "1px solid #3b4266", borderRadius: 4, color: "#e2e8f0", fontFamily: "'Lato',sans-serif", fontSize: 12, padding: "4px 8px", width: "100%", outline: "none" }} />
+                      : <span style={{ color: "#e2e8f0", cursor: "pointer" }} onClick={() => setEditingId(it.id)}>{it.description}</span>}
+                  </td>
+                  <td style={{ padding: "8px 12px", color: "#64748b" }}>{it.unit}</td>
+                  <td style={{ padding: "8px 12px" }}><input type="number" value={it.quantity} onChange={e => updateItem(sec.id, it.id, "quantity", e.target.value)} style={{ background: "#252a3a", border: "1px solid #3b4266", borderRadius: 4, color: "#e2e8f0", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: "4px 6px", width: 60, outline: "none" }} /></td>
+                  {["low","mid","high"].map(q => (
+                    <td key={q} style={{ padding: "8px 12px" }}>
+                      <div style={{ fontSize: 10, color: "#3b4266", fontFamily: "'IBM Plex Mono',monospace" }}>{fmt(it.quantity * it[q])}</div>
+                      <input type="number" value={it[q]} onChange={e => updateItem(sec.id, it.id, q, e.target.value)} style={{ background: "#252a3a", border: `1px solid ${q === selQ.toLowerCase() ? QUALITY_COLORS[selQ] + "66" : "#3b4266"}`, borderRadius: 4, color: QUALITY_COLORS[q === "low" ? "Low" : q === "mid" ? "Mid" : "High"], fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, padding: "3px 6px", width: 70, outline: "none" }} />
+                    </td>
+                  ))}
+                  <td style={{ padding: "8px 12px", color: "#64748b", fontSize: 11 }}>{it.notes}</td>
+                  <td style={{ padding: "8px 12px" }}><button onClick={() => removeItem(sec.id, it.id)} style={{ background: "none", border: "none", color: "#3b4266", cursor: "pointer", fontSize: 14 }}>✕</button></td>
+                </tr>
+              ))}
+              <tr style={{ background: "#0f1117", borderTop: "1px solid #252a3a" }}>
+                <td colSpan={3} style={{ padding: "8px 12px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b" }}>SECTION TOTAL</td>
+                {["Low","Mid","High"].map(q => <td key={q} style={{ padding: "8px 12px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: QUALITY_COLORS[q], fontWeight: q === selQ ? 700 : 400 }}>{fmt(calcSectionTotal(sec.items||[], q))}</td>)}
+                <td colSpan={2} />
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      {/* Labor */}
+      <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid #252a3a", display: "flex", justifyContent: "space-between", background: "#0f1117" }}>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 15, color: "#e2e8f0" }}>Labor</div>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: selColor }}>{fmt(calcLaborTotal(estimate.laborSections||[], selQ))}</span>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Lato',sans-serif", fontSize: 12 }}>
+          <thead><tr style={{ background: "#0a0d14" }}>{["Trade","Description","Low","Mid","High"].map(h => <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: "#3b4266", fontWeight: 400 }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(estimate.laborSections || []).map((l, i) => (
+              <tr key={l.id} style={{ borderBottom: "1px solid #1e2130", background: i % 2 === 0 ? "#181c27" : "#161926" }}>
+                <td style={{ padding: "8px 12px", color: "#c8a96e", fontWeight: 700 }}>{l.trade}</td>
+                <td style={{ padding: "8px 12px", color: "#94a3b8" }}>{l.description}</td>
+                {["low","mid","high"].map(q => (
+                  <td key={q} style={{ padding: "8px 12px" }}>
+                    <input type="number" value={l[q]} onChange={e => updateLabor(l.id, q, e.target.value)} style={{ background: "#252a3a", border: `1px solid ${q === selQ.toLowerCase() ? QUALITY_COLORS[selQ] + "66" : "#3b4266"}`, borderRadius: 4, color: QUALITY_COLORS[q === "low" ? "Low" : q === "mid" ? "Mid" : "High"], fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: "4px 8px", width: 90, outline: "none" }} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr style={{ background: "#0f1117", borderTop: "1px solid #252a3a" }}>
+              <td colSpan={2} style={{ padding: "8px 12px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b" }}>LABOR TOTAL</td>
+              {["Low","Mid","High"].map(q => <td key={q} style={{ padding: "8px 12px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: QUALITY_COLORS[q], fontWeight: q === selQ ? 700 : 400 }}>{fmt(calcLaborTotal(estimate.laborSections||[], q))}</td>)}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* Additional costs */}
+      <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ padding: "12px 18px", borderBottom: "1px solid #252a3a", display: "flex", justifyContent: "space-between", background: "#0f1117" }}>
+          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 15, color: "#e2e8f0" }}>Additional Costs</div>
+          <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: selColor }}>{fmt(calcAddlTotal(estimate.additionalCosts||[], selQ))}</span>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Lato',sans-serif", fontSize: 12 }}>
+          <thead><tr style={{ background: "#0a0d14" }}>{["Description","Low","Mid","High"].map(h => <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: "#3b4266", fontWeight: 400 }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {(estimate.additionalCosts || []).map((a, i) => (
+              <tr key={a.id} style={{ borderBottom: "1px solid #1e2130", background: i % 2 === 0 ? "#181c27" : "#161926" }}>
+                <td style={{ padding: "8px 12px", color: "#e2e8f0" }}>{a.description}</td>
+                {["low","mid","high"].map(q => (
+                  <td key={q} style={{ padding: "8px 12px" }}>
+                    <input type="number" value={a[q]} onChange={e => updateAddl(a.id, q, e.target.value)} style={{ background: "#252a3a", border: `1px solid ${q === selQ.toLowerCase() ? QUALITY_COLORS[selQ] + "66" : "#3b4266"}`, borderRadius: 4, color: QUALITY_COLORS[q === "low" ? "Low" : q === "mid" ? "Mid" : "High"], fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, padding: "4px 8px", width: 90, outline: "none" }} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Grand total */}
+      <div style={{ background: "linear-gradient(135deg,#181c27,#1e2335)", border: `2px solid ${selColor}44`, borderRadius: 10, padding: "20px 24px", marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, textAlign: "center" }}>
+          {QUALITY_LEVELS.map(q => (
+            <div key={q}>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 6 }}>{q.toUpperCase()} END TOTAL</div>
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 26, color: QUALITY_COLORS[q], fontWeight: 500 }}>{fmt(grandTotal(q))}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Contractor notes */}
+      <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, padding: 20, marginBottom: 16 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 10 }}>CONTRACTOR NOTES & EXCLUSIONS</div>
+        <textarea value={contractorNotes} onChange={e => { setContractorNotes(e.target.value); updateProject({ estimateNotes: e.target.value }); }} placeholder="Add any notes, exclusions, payment terms, warranty info, or special conditions for the homeowner..."
+          rows={4} style={{ background: "#252a3a", border: "1px solid #3b4266", borderRadius: 6, color: "#e2e8f0", fontFamily: "'Lato',sans-serif", fontSize: 13, padding: "10px 12px", width: "100%", outline: "none", resize: "none", lineHeight: 1.6 }} />
+      </div>
+
+      {/* Assumptions */}
+      {(estimate.assumptions || []).length > 0 && (
+        <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, padding: 18, marginBottom: 16 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", marginBottom: 10 }}>ASSUMPTIONS & EXCLUSIONS</div>
+          {estimate.assumptions.map((a, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 13, fontFamily: "'Lato',sans-serif", color: "#94a3b8" }}>
+              <span style={{ color: "#f59e0b" }}>•</span> {a}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif", padding: "10px 14px", background: "#181c27", borderRadius: 8, border: "1px dashed #252a3a" }}>
+        💡 Click any price to edit it. Changes save automatically. Use the Print button to generate a PDF to send to the homeowner.
+      </div>
+    </div>
+  );
+}
+
 const TABS = [
   { id: "dashboard",  label: "Dashboard",    icon: "⊞" },
   { id: "milestones", label: "Milestones",   icon: "🏁" },
@@ -1319,18 +1848,40 @@ const TABS = [
   { id: "payments",   label: "Payments",     icon: "💸" },
   { id: "documents",  label: "Documents",    icon: "📁" },
   { id: "disputes",   label: "Disputes",     icon: "⚠️" },
-  { id: "costbasis",  label: "Cost Basis",   icon: "🏠" },
+  { id: "costbasis",  label: "Cost Basis",   icon: "🏠", homeownerOnly: true },
+  { id: "estimator",  label: "Estimator",    icon: "📋", contractorOnly: true },
 ];
+
+// ── localStorage helpers ─────────────────────────────────────────────────────
+const STORAGE_KEY = "groundwork_projects_v1";
+
+function loadProjects() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (Array.isArray(saved) && saved.length > 0) return saved;
+    }
+  } catch {}
+  return [SAMPLE_PROJECT];
+}
+
+function saveProjects(projects) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(projects)); } catch {}
+}
 
 export default function App() {
   const [screen, setScreen] = useState("home");
-  const [projects, setProjects] = useState([SAMPLE_PROJECT]);
+  const [projects, setProjects] = useState(() => loadProjects());
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [showWizard, setShowWizard] = useState(false);
   const [role, setRole] = useState("homeowner");
   const [tab, setTab] = useState("dashboard");
   const [activeDispute, setActiveDispute] = useState(1);
   const [toast, setToast] = useState(null);
+
+  // Auto-save whenever projects change
+  useEffect(() => { saveProjects(projects); }, [projects]);
 
   const activeProject = projects.find(p => p.id === activeProjectId);
   const showToast = (msg, type = "success") => { setToast({ msg, type }); };
@@ -1390,7 +1941,7 @@ export default function App() {
           </div>
 
           <nav style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1 }}>
-            {TABS.map(t => (
+            {TABS.filter(t => (!t.homeownerOnly || role === "homeowner") && (!t.contractorOnly || role === "contractor")).map(t => (
               <button key={t.id} className={`nav-btn${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>
                 <span style={{ fontSize: 13 }}>{t.icon}</span>
                 <span>{t.label}</span>
@@ -1417,6 +1968,7 @@ export default function App() {
           {tab === "documents"  && <DocumentsView  project={activeProject} updateProject={updateProject} />}
           {tab === "disputes"   && <DisputesView   project={activeProject} updateProject={updateProject} role={role} activeDispute={activeDispute} setActiveDispute={setActiveDispute} />}
           {tab === "costbasis"  && <CostBasisView  project={activeProject} updateProject={updateProject} />}
+          {tab === "estimator"  && <EstimatorView  project={activeProject} updateProject={updateProject} />}
         </div>
       </div>
     </div>
