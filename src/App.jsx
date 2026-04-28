@@ -41,8 +41,8 @@ function recomputeMilestoneStatus(m) {
 }
 
 const MILESTONE_COLOR = { Released: "#22c55e", "Pending Homeowner": "#f59e0b", "Pending Contractor": "#60a5fa", "Ready to Release": "#a78bfa", Disputed: "#ef4444", Upcoming: "#3b4266" };
-const DOC_TYPES = ["Contract", "Estimate", "Permit", "Insurance", "Receipt", "Correspondence", "Inspection", "Photo", "Other"];
-const DOC_ICON = { Contract: "📄", Estimate: "📋", Permit: "🏛️", Insurance: "🛡️", Receipt: "🧾", Correspondence: "✉️", Inspection: "🔍", Photo: "📷", Other: "📁" };
+const DOC_TYPES = ["Contract", "Permit", "Insurance", "Receipt", "Correspondence", "Inspection", "Photo", "Other"];
+const DOC_ICON = { Contract: "📄", Permit: "🏛️", Insurance: "🛡️", Receipt: "🧾", Correspondence: "✉️", Inspection: "🔍", Photo: "📷", Other: "📁" };
 const EXP_CATS = ["Materials", "Labor", "Subcontractor", "Permit", "Other"];
 const ROLE_CFG = {
   homeowner: { label: "Homeowner", color: "#60a5fa", bg: "#1e2d4a", avatar: "HO", greeting: "Andrew & Stephanie" },
@@ -243,20 +243,6 @@ function ProjectWizard({ onSave, onClose }) {
 }
 
 function HomeScreen({ projects, onSelect, onNew }) {
-  const [showCostBasis, setShowCostBasis] = useState(false);
-
-  // Aggregate cost basis across all projects
-  const firstProject = projects[0];
-  const originalBasis = firstProject?.homePurchasePrice || 0;
-  const purchaseYear = firstProject?.homePurchaseYear || "—";
-  const allExpenses = projects.flatMap(p => (p.expenses || []).map(e => ({ ...e, projectName: p.name })));
-  const qualifyingTotal = allExpenses.filter(e => {
-    const cat = IRS_CATEGORIES.find(c => c.id === e.irsCategory);
-    return cat?.qualifies && e.approved;
-  }).reduce((s, e) => s + e.amount, 0);
-  const adjustedBasis = originalBasis + qualifyingTotal;
-  const estTaxSavings = qualifyingTotal * 0.15;
-
   return (
     <div style={{ fontFamily: "'Georgia',serif", background: "#0a0d14", minHeight: "100vh", color: "#e2e8f0", display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 24px" }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&family=Lato:wght@300;400;700&display=swap'); *{box-sizing:border-box;margin:0;padding:0;} @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}} @keyframes spin{to{transform:rotate(360deg);}}`}</style>
@@ -314,78 +300,6 @@ function HomeScreen({ projects, onSelect, onNew }) {
             </div>
           )}
         </div>
-
-        {/* Cost Basis Section */}
-        {projects.length > 0 && (
-          <div style={{ marginTop: 36, animation: "fadeUp .6s ease .2s both" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 20, color: "#e2e8f0" }}>🏠 Cost Basis Tracker</div>
-                <div style={{ fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif", marginTop: 3 }}>Across all projects · IRS Publication 523</div>
-              </div>
-              <button onClick={() => setShowCostBasis(v => !v)} style={{ background: "none", border: "1px solid #252a3a", borderRadius: 6, color: "#64748b", fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, cursor: "pointer", padding: "5px 12px" }}>
-                {showCostBasis ? "Hide Details ▲" : "Show Details ▼"}
-              </button>
-            </div>
-
-            {/* Summary cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: showCostBasis ? 20 : 0 }}>
-              {[
-                { l: "Original Basis", v: fmt(originalBasis), a: "#64748b", sub: `Purchased ${purchaseYear}` },
-                { l: "Improvements", v: fmt(qualifyingTotal), a: "#22c55e", sub: `${projects.length} project${projects.length !== 1 ? "s" : ""}` },
-                { l: "Adjusted Basis", v: fmt(adjustedBasis), a: "#c8a96e", sub: "Current estimate" },
-                { l: "Est. Tax Benefit", v: fmt(estTaxSavings), a: "#a78bfa", sub: "At 15% cap gains" },
-              ].map(s => (
-                <div key={s.l} style={{ background: "linear-gradient(135deg,#181c27,#1a1e2e)", border: `1px solid ${s.a}22`, borderRadius: 10, padding: "14px 16px" }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 9, color: "#64748b", letterSpacing: "0.1em", marginBottom: 4 }}>{s.l.toUpperCase()}</div>
-                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: s.a, fontWeight: 500, marginBottom: 2 }}>{s.v}</div>
-                  <div style={{ fontSize: 10, color: "#3b4266", fontFamily: "'Lato',sans-serif" }}>{s.sub}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Expanded detail */}
-            {showCostBasis && (
-              <div>
-                <div style={{ background: "#1a1428", border: "1px solid #a78bfa33", borderRadius: 10, padding: 16, marginBottom: 16, fontSize: 12, color: "#94a3b8", fontFamily: "'Lato',sans-serif", lineHeight: 1.8 }}>
-                  ⚖️ A capital improvement must <strong style={{ color: "#e2e8f0" }}>add value</strong>, <strong style={{ color: "#e2e8f0" }}>prolong useful life</strong>, or <strong style={{ color: "#e2e8f0" }}>adapt to new uses</strong>. Repairs that maintain existing condition do <strong style={{ color: "#ef4444" }}>not</strong> qualify. Consult a CPA for your specific situation.
-                </div>
-
-                {projects.map(p => {
-                  const pExpenses = (p.expenses || []).filter(e => { const cat = IRS_CATEGORIES.find(c => c.id === e.irsCategory); return cat?.qualifies && e.approved; });
-                  const pTotal = pExpenses.reduce((s, e) => s + e.amount, 0);
-                  if (pTotal === 0 && pExpenses.length === 0) return null;
-                  return (
-                    <div key={p.id} style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, overflow: "hidden", marginBottom: 12 }}>
-                      <div style={{ padding: "12px 16px", borderBottom: "1px solid #252a3a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 14, color: "#e2e8f0" }}>{p.name}</div>
-                        <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: "#22c55e" }}>{fmt(pTotal)} qualifying</div>
-                      </div>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Lato',sans-serif", fontSize: 12 }}>
-                        <tbody>
-                          {pExpenses.map((e, i) => {
-                            const cat = IRS_CATEGORIES.find(c => c.id === e.irsCategory);
-                            return (
-                              <tr key={e.id} style={{ borderBottom: "1px solid #1e2130", background: i % 2 === 0 ? "#181c27" : "#161926" }}>
-                                <td style={{ padding: "8px 14px", color: "#e2e8f0" }}>{e.description}</td>
-                                <td style={{ padding: "8px 14px", color: "#64748b" }}>{cat?.label || e.irsCategory}</td>
-                                <td style={{ padding: "8px 14px", textAlign: "right", fontFamily: "'IBM Plex Mono',monospace", color: "#c8a96e" }}>{fmt(e.amount)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })}
-
-                <div style={{ padding: "12px 16px", background: "#181c27", border: "1px dashed #252a3a", borderRadius: 8, fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif" }}>
-                  💡 Save all receipts, permits, and contractor invoices. Your adjusted cost basis reduces taxable capital gain when you sell.
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1396,283 +1310,6 @@ function DisputesView({ project, updateProject, role, activeDispute, setActiveDi
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// INVOICE
-// ═══════════════════════════════════════════════════════════════════════════════
-const INV_CATS = ["Materials", "Labor", "Subcontractor", "Permit", "Equipment", "Other"];
-
-function InvoiceView({ project, updateProject, role }) {
-  const invoices = project.invoices || [];
-  const [activeInv, setActiveInv] = useState(invoices.length > 0 ? invoices[0].id : null);
-  const [showNew, setShowNew] = useState(false);
-  const [showPreview, setShowPreview] = useState(false);
-  const [newInvForm, setNewInvForm] = useState({ notes: "", dueDate: "" });
-  const [editItem, setEditItem] = useState(null);
-  const [itemForm, setItemForm] = useState({ description: "", category: "Materials", qty: "1", unitPrice: "" });
-
-  const inv = invoices.find(i => i.id === activeInv);
-  const subtotal = inv ? inv.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0) : 0;
-  const tax = 0;
-  const total = subtotal + tax;
-
-  const createInvoice = () => {
-    const num = "INV-" + String(invoices.length + 1).padStart(4, "0");
-    const ni = { id: Date.now(), invoiceNumber: num, date: today, dueDate: newInvForm.dueDate || "", notes: newInvForm.notes, status: "Draft", lineItems: [] };
-    updateProject({ invoices: [...invoices, ni] });
-    setActiveInv(ni.id);
-    setShowNew(false);
-    setNewInvForm({ notes: "", dueDate: "" });
-  };
-
-  const addLineItem = () => {
-    if (!itemForm.description || !itemForm.unitPrice) return;
-    const li = { id: Date.now(), description: itemForm.description, category: itemForm.category, qty: parseFloat(itemForm.qty) || 1, unitPrice: parseFloat(itemForm.unitPrice) || 0 };
-    updateProject({ invoices: invoices.map(i => i.id === activeInv ? { ...i, lineItems: [...i.lineItems, li] } : i) });
-    setItemForm({ description: "", category: "Materials", qty: "1", unitPrice: "" });
-    setEditItem(null);
-  };
-
-  const removeLineItem = (liId) => {
-    updateProject({ invoices: invoices.map(i => i.id === activeInv ? { ...i, lineItems: i.lineItems.filter(li => li.id !== liId) } : i) });
-  };
-
-  const updateStatus = (status) => {
-    updateProject({ invoices: invoices.map(i => i.id === activeInv ? { ...i, status } : i) });
-  };
-
-  const STATUS_COLOR = { Draft: { bg: "#252a3a", color: "#64748b" }, Sent: { bg: "#1e2d4a", color: "#60a5fa" }, Paid: { bg: "#1a2d1a", color: "#22c55e" } };
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 22 }}>
-        <div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#c8a96e", letterSpacing: "0.1em", marginBottom: 4 }}>CONTRACTOR INVOICING</div>
-          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 22, color: "#e2e8f0" }}>Invoices</div>
-          <div style={{ fontSize: 13, color: "#64748b", fontFamily: "'Lato',sans-serif", marginTop: 2 }}>{invoices.length} invoice{invoices.length !== 1 ? "s" : ""} · Bill materials and labor to homeowner</div>
-        </div>
-        <Btn onClick={() => setShowNew(true)}>+ New Invoice</Btn>
-      </div>
-
-      {invoices.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 0", color: "#3b4266" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🧾</div>
-          <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 18, color: "#64748b", marginBottom: 8 }}>No invoices yet</div>
-          <div style={{ fontSize: 13, color: "#3b4266", fontFamily: "'Lato',sans-serif" }}>Click "+ New Invoice" to create your first invoice for this project</div>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 18 }}>
-          {/* Invoice list sidebar */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {invoices.map(i => {
-              const iTotal = i.lineItems.reduce((s, li) => s + li.qty * li.unitPrice, 0);
-              const sc = STATUS_COLOR[i.status] || STATUS_COLOR.Draft;
-              return (
-                <div key={i.id} onClick={() => setActiveInv(i.id)}
-                  style={{ background: activeInv === i.id ? "#1e2335" : "#181c27", border: `1px solid ${activeInv === i.id ? "#c8a96e44" : "#252a3a"}`, borderRadius: 8, padding: "12px 14px", cursor: "pointer", transition: "all .2s" }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#c8a96e", marginBottom: 3 }}>{i.invoiceNumber}</div>
-                  <div style={{ fontSize: 12, color: "#94a3b8", fontFamily: "'Lato',sans-serif", marginBottom: 5 }}>{i.date}</div>
-                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 14, color: "#e2e8f0", marginBottom: 6 }}>{fmt(iTotal)}</div>
-                  <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", background: sc.bg, color: sc.color }}>{i.status}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Invoice detail */}
-          {inv && (
-            <div>
-              <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, overflow: "hidden", marginBottom: 16 }}>
-                {/* Invoice header */}
-                <div style={{ padding: "16px 20px", borderBottom: "1px solid #252a3a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <div style={{ fontFamily: "'Playfair Display',serif", fontSize: 18, color: "#e2e8f0" }}>{inv.invoiceNumber}</div>
-                    <div style={{ fontSize: 12, color: "#64748b", fontFamily: "'IBM Plex Mono',monospace", marginTop: 3 }}>
-                      Issued: {inv.date}{inv.dueDate ? ` · Due: ${inv.dueDate}` : ""}
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {["Draft", "Sent", "Paid"].map(s => {
-                      const sc = STATUS_COLOR[s];
-                      return (
-                        <button key={s} onClick={() => updateStatus(s)}
-                          style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", background: inv.status === s ? sc.bg : "#0f1117", color: inv.status === s ? sc.color : "#3b4266", border: `1px solid ${inv.status === s ? sc.color + "44" : "#252a3a"}`, cursor: "pointer", transition: "all .2s" }}>
-                          {s}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Line items table */}
-                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "'Lato',sans-serif", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: "#0f1117", borderBottom: "1px solid #252a3a" }}>
-                      {["Description", "Category", "Qty", "Unit Price", "Amount", ""].map(h => (
-                        <th key={h} style={{ padding: "10px 14px", textAlign: h === "Qty" || h === "Unit Price" || h === "Amount" ? "right" : "left", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: "0.1em", color: "#64748b", fontWeight: 400 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {inv.lineItems.map((li, idx) => (
-                      <tr key={li.id} style={{ borderBottom: "1px solid #1e2130", background: idx % 2 === 0 ? "#181c27" : "#161926" }}>
-                        <td style={{ padding: "10px 14px", color: "#e2e8f0" }}>{li.description}</td>
-                        <td style={{ padding: "10px 14px" }}>
-                          <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", background: li.category === "Labor" ? "#1e2d4a" : li.category === "Subcontractor" ? "#2d1e3a" : "#1e2d1e", color: li.category === "Labor" ? "#60a5fa" : li.category === "Subcontractor" ? "#a78bfa" : "#4ade80" }}>{li.category}</span>
-                        </td>
-                        <td style={{ padding: "10px 14px", textAlign: "right", fontFamily: "'IBM Plex Mono',monospace", color: "#94a3b8" }}>{li.qty}</td>
-                        <td style={{ padding: "10px 14px", textAlign: "right", fontFamily: "'IBM Plex Mono',monospace", color: "#94a3b8" }}>{fmt(li.unitPrice)}</td>
-                        <td style={{ padding: "10px 14px", textAlign: "right", fontFamily: "'IBM Plex Mono',monospace", fontWeight: 500, color: "#e2e8f0" }}>{fmt(li.qty * li.unitPrice)}</td>
-                        <td style={{ padding: "10px 14px", textAlign: "right" }}>
-                          <button onClick={() => removeLineItem(li.id)} style={{ background: "none", border: "none", color: "#3b4266", cursor: "pointer", fontSize: 14, padding: 2 }} title="Remove">✕</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {inv.lineItems.length === 0 && (
-                      <tr><td colSpan={6} style={{ padding: "24px 14px", textAlign: "center", color: "#3b4266", fontFamily: "'Lato',sans-serif", fontSize: 13 }}>No line items yet — add materials, labor, and inputs below</td></tr>
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: "#0f1117", borderTop: "2px solid #252a3a" }}>
-                      <td colSpan={4} style={{ padding: "12px 14px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#64748b", letterSpacing: "0.1em", textAlign: "right" }}>SUBTOTAL</td>
-                      <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, color: "#c8a96e", fontWeight: 500 }}>{fmt(subtotal)}</td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-
-                {inv.notes && (
-                  <div style={{ padding: "12px 20px", borderTop: "1px solid #252a3a", fontSize: 12, color: "#64748b", fontFamily: "'Lato',sans-serif" }}>
-                    <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: "#3b4266", letterSpacing: "0.08em", marginRight: 8 }}>NOTES</span>{inv.notes}
-                  </div>
-                )}
-              </div>
-
-              {/* Add line item form */}
-              <div style={{ background: "#181c27", border: "1px solid #252a3a", borderRadius: 10, padding: "16px 20px", marginBottom: 16 }}>
-                <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: "#c8a96e", letterSpacing: "0.1em", marginBottom: 14 }}>ADD LINE ITEM</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 140px 80px 110px", gap: 10, marginBottom: 12 }}>
-                  <Inp label="Description" value={itemForm.description} onChange={v => setItemForm(f => ({ ...f, description: v }))} placeholder="e.g. 2×4 lumber (16 ft)" />
-                  <Sel label="Category" value={itemForm.category} onChange={v => setItemForm(f => ({ ...f, category: v }))} options={INV_CATS} />
-                  <Inp label="Qty" value={itemForm.qty} onChange={v => setItemForm(f => ({ ...f, qty: v }))} type="number" placeholder="1" />
-                  <Inp label="Unit Price ($)" value={itemForm.unitPrice} onChange={v => setItemForm(f => ({ ...f, unitPrice: v }))} type="number" placeholder="0.00" />
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  {itemForm.description && itemForm.unitPrice ? (
-                    <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, color: "#64748b" }}>
-                      Line total: <span style={{ color: "#c8a96e" }}>{fmt((parseFloat(itemForm.qty) || 1) * (parseFloat(itemForm.unitPrice) || 0))}</span>
-                    </div>
-                  ) : <div />}
-                  <Btn onClick={addLineItem} disabled={!itemForm.description || !itemForm.unitPrice}>Add Item +</Btn>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div style={{ display: "flex", gap: 10 }}>
-                <Btn onClick={() => setShowPreview(true)} disabled={inv.lineItems.length === 0}>🖨 Generate Invoice for Homeowner</Btn>
-                {inv.status === "Draft" && inv.lineItems.length > 0 && (
-                  <Btn onClick={() => updateStatus("Sent")} color="#60a5fa">Send to Homeowner</Btn>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* New Invoice Modal */}
-      {showNew && (
-        <Modal title="Create New Invoice" onClose={() => setShowNew(false)} maxWidth={440}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 20 }}>
-            <Inp label="Due Date (optional)" value={newInvForm.dueDate} onChange={v => setNewInvForm(f => ({ ...f, dueDate: v }))} type="date" />
-            <div>
-              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4, fontFamily: "'Lato',sans-serif" }}>Notes (optional)</div>
-              <textarea value={newInvForm.notes} onChange={e => setNewInvForm(f => ({ ...f, notes: e.target.value }))} placeholder="Payment terms, scope notes, etc."
-                style={{ background: "#252a3a", border: "1px solid #3b4266", borderRadius: 6, color: "#e2e8f0", fontFamily: "'Lato',sans-serif", fontSize: 13, padding: "9px 12px", width: "100%", outline: "none", resize: "vertical", minHeight: 80 }} />
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <Btn full onClick={createInvoice}>Create Invoice</Btn>
-            <Btn color="#252a3a" onClick={() => setShowNew(false)}>Cancel</Btn>
-          </div>
-        </Modal>
-      )}
-
-      {/* Invoice Preview / Print Modal */}
-      {showPreview && inv && (
-        <Modal title="Invoice Preview" onClose={() => setShowPreview(false)} maxWidth={680}>
-          <div id="invoice-print" style={{ background: "#fff", color: "#111", borderRadius: 8, padding: "32px 36px", fontFamily: "'Lato',sans-serif" }}>
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28, borderBottom: "2px solid #e5e7eb", paddingBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 28, fontWeight: 700, color: "#1e293b", fontFamily: "'Playfair Display',serif", marginBottom: 4 }}>INVOICE</div>
-                <div style={{ fontSize: 13, color: "#64748b" }}>{inv.invoiceNumber}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: "#1e293b", marginBottom: 2 }}>{project.contractor || "Contractor"}</div>
-                {project.contractorLicense && <div style={{ fontSize: 12, color: "#64748b" }}>License: {project.contractorLicense}</div>}
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>Date: {inv.date}</div>
-                {inv.dueDate && <div style={{ fontSize: 12, color: "#64748b" }}>Due: {inv.dueDate}</div>}
-              </div>
-            </div>
-
-            {/* Parties */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 28 }}>
-              <div>
-                <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: 6, textTransform: "uppercase" }}>Bill To</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{project.homeowner || "Homeowner"}</div>
-                <div style={{ fontSize: 13, color: "#475569" }}>{project.address || ""}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "#94a3b8", marginBottom: 6, textTransform: "uppercase" }}>Project</div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{project.name}</div>
-                <div style={{ fontSize: 13, color: "#475569" }}>{project.address}</div>
-              </div>
-            </div>
-
-            {/* Line items table */}
-            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20, fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0" }}>
-                  {["Description", "Category", "Qty", "Unit Price", "Amount"].map((h, i) => (
-                    <th key={h} style={{ padding: "9px 12px", textAlign: i > 1 ? "right" : "left", fontSize: 10, letterSpacing: "0.1em", color: "#64748b", fontWeight: 600, textTransform: "uppercase" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {inv.lineItems.map((li, idx) => (
-                  <tr key={li.id} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                    <td style={{ padding: "9px 12px", color: "#1e293b" }}>{li.description}</td>
-                    <td style={{ padding: "9px 12px", color: "#64748b" }}>{li.category}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569" }}>{li.qty}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", color: "#475569" }}>{fmt(li.unitPrice)}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "right", fontWeight: 600, color: "#1e293b" }}>{fmt(li.qty * li.unitPrice)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr style={{ borderTop: "2px solid #1e293b" }}>
-                  <td colSpan={4} style={{ padding: "12px", textAlign: "right", fontWeight: 700, fontSize: 14, color: "#1e293b" }}>TOTAL DUE</td>
-                  <td style={{ padding: "12px", textAlign: "right", fontWeight: 700, fontSize: 16, color: "#1e293b" }}>{fmt(subtotal)}</td>
-                </tr>
-              </tfoot>
-            </table>
-
-            {inv.notes && (
-              <div style={{ background: "#f8fafc", borderRadius: 6, padding: "12px 14px", fontSize: 12, color: "#475569", borderLeft: "3px solid #c8a96e" }}>
-                <div style={{ fontWeight: 700, marginBottom: 4, color: "#1e293b", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>Notes</div>
-                {inv.notes}
-              </div>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-            <Btn full onClick={() => window.print()}>🖨 Print / Save as PDF</Btn>
-            <Btn color="#252a3a" onClick={() => setShowPreview(false)}>Close</Btn>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════════
 const TABS = [
@@ -1682,39 +1319,18 @@ const TABS = [
   { id: "payments",   label: "Payments",     icon: "💸" },
   { id: "documents",  label: "Documents",    icon: "📁" },
   { id: "disputes",   label: "Disputes",     icon: "⚠️" },
-  { id: "invoice",    label: "Invoicing",    icon: "🧾", contractorOnly: true },
+  { id: "costbasis",  label: "Cost Basis",   icon: "🏠" },
 ];
-
-// ── localStorage helpers ─────────────────────────────────────────────────────
-const STORAGE_KEY = "groundwork_projects_v1";
-
-function loadProjects() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const saved = JSON.parse(raw);
-      if (Array.isArray(saved) && saved.length > 0) return saved;
-    }
-  } catch {}
-  return [SAMPLE_PROJECT];
-}
-
-function saveProjects(projects) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(projects)); } catch {}
-}
 
 export default function App() {
   const [screen, setScreen] = useState("home");
-  const [projects, setProjects] = useState(() => loadProjects());
+  const [projects, setProjects] = useState([SAMPLE_PROJECT]);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [showWizard, setShowWizard] = useState(false);
   const [role, setRole] = useState("homeowner");
   const [tab, setTab] = useState("dashboard");
   const [activeDispute, setActiveDispute] = useState(1);
   const [toast, setToast] = useState(null);
-
-  // Auto-save whenever projects change
-  useEffect(() => { saveProjects(projects); }, [projects]);
 
   const activeProject = projects.find(p => p.id === activeProjectId);
   const showToast = (msg, type = "success") => { setToast({ msg, type }); };
@@ -1723,7 +1339,7 @@ export default function App() {
     setProjects(ps => ps.map(p => p.id === activeProjectId ? { ...p, ...changes } : p));
   };
 
-  const openProject = (id) => { setActiveProjectId(id); setScreen("project"); setTab("dashboard"); setActiveDispute(null); };
+  const openProject = (id) => { setActiveProjectId(id); setScreen("project"); setTab("dashboard"); };
 
   const openDisp = activeProject?.disputes?.filter(d => d.status === "Open").length || 0;
 
@@ -1774,7 +1390,7 @@ export default function App() {
           </div>
 
           <nav style={{ display: "flex", flexDirection: "column", gap: 1, flex: 1 }}>
-            {TABS.filter(t => (!t.homeownerOnly || role === "homeowner") && (!t.contractorOnly || role === "contractor")).map(t => (
+            {TABS.map(t => (
               <button key={t.id} className={`nav-btn${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>
                 <span style={{ fontSize: 13 }}>{t.icon}</span>
                 <span>{t.label}</span>
@@ -1793,17 +1409,16 @@ export default function App() {
         </div>
 
         {/* Main content */}
-        <div key={activeProjectId} style={{ overflowY: "auto", padding: "26px 30px" }}>
+        <div style={{ overflowY: "auto", padding: "26px 30px" }}>
           {tab === "dashboard"  && <DashboardView  project={activeProject} role={role} setTab={setTab} setActiveDispute={setActiveDispute} />}
           {tab === "milestones" && <MilestonesView project={activeProject} updateProject={updateProject} role={role} />}
           {tab === "financials" && <FinancialsView project={activeProject} updateProject={updateProject} />}
           {tab === "payments"   && <PaymentsView   project={activeProject} updateProject={updateProject} role={role} />}
           {tab === "documents"  && <DocumentsView  project={activeProject} updateProject={updateProject} />}
           {tab === "disputes"   && <DisputesView   project={activeProject} updateProject={updateProject} role={role} activeDispute={activeDispute} setActiveDispute={setActiveDispute} />}
-          {tab === "invoice"    && <InvoiceView    project={activeProject} updateProject={updateProject} role={role} />}
+          {tab === "costbasis"  && <CostBasisView  project={activeProject} updateProject={updateProject} />}
         </div>
       </div>
     </div>
   );
 }
-
